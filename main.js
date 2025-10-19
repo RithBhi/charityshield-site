@@ -1,9 +1,10 @@
-// Smooth scroll helpers
+// ===== Smooth scroll helpers =====
 function scrollToDemo(){ document.querySelector('#demo')?.scrollIntoView({behavior:'smooth'}); }
 function scrollToAbout(){ document.querySelector('#about')?.scrollIntoView({behavior:'smooth'}); }
 
-// Typed headline
+// ===== On load: typed headline, fade-ins, counters, charts =====
 document.addEventListener('DOMContentLoaded', () => {
+  // Typed headline
   if (window.Typed) {
     new Typed('#typed-headline', {
       strings: [
@@ -20,9 +21,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Fade-in on scroll
   const observer = new IntersectionObserver(entries => {
-    entries.forEach(e => {
-      if (e.isIntersecting) e.target.classList.add('visible');
-    });
+    entries.forEach(e => e.isIntersecting && e.target.classList.add('visible'));
   }, { threshold: 0.15 });
   document.querySelectorAll('.fade-in').forEach(el => observer.observe(el));
 
@@ -33,14 +32,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const step = Math.max(1, Math.floor(target / 60));
     const tick = () => {
       current += step;
-      if (current >= target) { current = target; }
+      if (current >= target) current = target;
       counter.textContent = current;
       if (current < target) requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
   });
 
-  // Charts
+  // ECharts: trends
   const trendsEl = document.getElementById('fraudTrendsChart');
   if (trendsEl && window.echarts) {
     const chart = echarts.init(trendsEl);
@@ -51,6 +50,7 @@ document.addEventListener('DOMContentLoaded', () => {
       series: [{ type: 'line', data: [60, 75, 90, 120, 180, 220] }]
     });
   }
+  // ECharts: methods
   const methodsEl = document.getElementById('fraudMethodsChart');
   if (methodsEl && window.echarts) {
     const chart2 = echarts.init(methodsEl);
@@ -63,7 +63,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 });
 
-// Samples
+// ===== Sample loader for demo =====
 function loadSample(n){
   const el = document.getElementById('demoInput');
   const samples = {
@@ -74,9 +74,9 @@ function loadSample(n){
   el.value = samples[n] || '';
 }
 
-// Analyze: tries serverless function first; falls back to local mock
+// ===== Analyze with serverless first; fallback to heuristic mock =====
 async function analyzeText(){
-  const input = document.getElementById('demoInput').value.trim();
+  const input = (document.getElementById('demoInput').value || '').trim();
   const results = document.getElementById('demoResults');
 
   if (!input) {
@@ -84,9 +84,10 @@ async function analyzeText(){
     return;
   }
 
+  // Try Netlify function
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 4000);
+    const timeout = setTimeout(() => controller.abort(), 6000);
     const resp = await fetch('/.netlify/functions/analyze', {
       method: 'POST',
       headers: { 'Content-Type':'application/json' },
@@ -99,25 +100,61 @@ async function analyzeText(){
       renderResult(data);
       return;
     }
-    // non-OK → mock
   } catch(e){
-    // fetch failed → mock
+    // ignore → fallback
   }
+
+  // Fallback mock (client-side)
   renderResult(mockAnalyze(input));
 }
 
+// ===== Heuristic mock classifier (client) =====
 function mockAnalyze(text){
-  // Tiny heuristic just for demo
-  const redFlags = ['gift card','wire','urgent','dm','credit card','short link','match 500','privacy'];
-  const score = redFlags.reduce((s, kw) => s + (text.toLowerCase().includes(kw) ? 12 : 0), 5);
-  const clipped = Math.max(0, Math.min(100, score));
-  const label = clipped >= 55 ? 'Likely Scam' : 'Likely Legitimate';
-  const reasons = redFlags.filter(kw => text.toLowerCase().includes(kw));
-  return { label, score: clipped, reasons: reasons.length ? reasons : ['No major red flags detected'] };
+  const t = text.toLowerCase();
+
+  // Red flags with weights
+  const flags = [
+    {re: /(gift\s*card|apple\s*card|steam\s*card|google\s*play)/, w: 30, why: 'Requests gift cards'},
+    {re: /\bwire\b|\bwestern\s+union\b|moneygram/, w: 22, why: 'Asks for wire/money transfer'},
+    {re: /\bcrypto|bitcoin|usdt|wallet address|metamask|binance\b/, w: 22, why: 'Requests crypto payment'},
+    {re: /(cashapp|venmo|zelle)\b.*(dm|pm|message)/, w: 16, why: 'Peer-to-peer app via DM'},
+    {re: /\burgent|now|immediately|today only|last chance|deadline|within\s+\d+\s*(minutes?|hours?)\b/, w: 12, why: 'High-pressure urgency'},
+    {re: /\bmatch(?:ed)?\s*\d{2,3}%|match\s*(\d+x|[2-9]00%)\b/, w: 12, why: 'Unrealistic match promise'},
+    {re: /\bprivacy\b.*(cannot|can.?t)\s*(show|share|provide)\s*(receipts|proof)/, w: 18, why: 'Claims privacy prevents receipts'},
+    {re: /\b(no|cannot|won'?t)\s*(provide|show)\s*(ein|receipt|501\(c\)3)\b/, w: 16, why: 'Refuses EIN/receipts'},
+    {re: /\b(dm|pm|direct message|telegram|whatsapp)\b/, w: 10, why: 'Moves to private messaging'},
+    {re: /(bit\.ly|tinyurl\.com|shorturl|goo\.gl|t\.co|is\.gd|ow\.ly|rb\.gy)/, w: 14, why: 'Uses a URL shortener'},
+    {re: /\bimpersonat(e|ing)|official support team|admin team\b/, w: 12, why: 'Possible impersonation'},
+    {re: /\bhelpless child|widow|war orphan|terminal\b/, w: 8,  why: 'Emotion bait'},
+  ];
+
+  // Legit signals (subtract)
+  const legit = [
+    {re: /\b(501\s*\(c\)\s*3|501c3|non[-\s]?profit)\b/, w: 12, why: 'Mentions nonprofit status'},
+    {re: /\bein\b[:\s]*\d{2}-\d{7}\b/, w: 20, why: 'Provides EIN format'},
+    {re: /\b(receipt|tax[-\s]?deductible|donation receipt)\b/, w: 10, why: 'Mentions receipts/tax-deductible'},
+    {re: /\b(donate|giving|support)\b.*\b(portal|official site|website)\b/, w: 8,  why: 'Directs to official portal'},
+  ];
+
+  let score = 0;
+  const reasons = [];
+
+  for (const f of flags){ if (f.re.test(t)) { score += f.w; reasons.push(f.why); } }
+  for (const g of legit){ if (g.re.test(t)) { score -= g.w; reasons.push(`Counter-signal: ${g.why}`); } }
+
+  // Short text & ALL-CAPS nudges
+  if (t.split(/\s+/).length < 6) score = Math.min(60, score + 10);
+  if (/[A-Z]{6,}/.test(text))   score = Math.min(100, score + 6);
+
+  score = Math.max(0, Math.min(100, score));
+  const label = score >= 45 ? 'Likely Scam' : 'Likely Legitimate';
+
+  return { label, score, reasons: reasons.length ? reasons : ['No strong signals detected'] };
 }
 
+// ===== Render result =====
 function renderResult({ label, score, reasons }){
-  const isScam = /scam/i.test(label) || score >= 55;
+  const isScam = /scam/i.test(label) || score >= 45;
   const badge = isScam ? 'scam-indicator' : 'legit-indicator';
   const emoji = isScam ? '⚠️' : '✅';
   const reasonList = (reasons || []).map(r => `<li class="list-disc ml-6">${r}</li>`).join('');
@@ -129,7 +166,7 @@ function renderResult({ label, score, reasons }){
       </div>
     </div>
     <div class="mt-4 bg-white rounded-xl p-6">
-      <h5 class="font-semibold mb-2">Why:</h5>
+      <h5 class="font-semibold mb-2">Signals:</h5>
       <ul class="text-slate-700">${reasonList}</ul>
     </div>
   `;
